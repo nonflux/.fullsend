@@ -80,6 +80,7 @@ runs:
         echo "${RUNNER_TEMP}/fullsend" >> "${GITHUB_PATH}"
 
     - name: Install OpenShell
+      shell: bash
       run: |
         curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/v0.0.30/install.sh | sh
         openshell --version
