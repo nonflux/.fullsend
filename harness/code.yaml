@@ -1,24 +1,23 @@
-# harness/code.yaml
-agent: agents/hello-world.md
+# harness/code.yaml — the real code agent.
+#
+# Phase 1: no post_script. The agent reads the issue, implements a fix,
+# runs tests + secret scan, and commits locally. It does NOT push or
+# create a PR — that's Phase 2 (post-script integration).
+agent: agents/code.md
 model: opus
-image: quay.io/manonru/fullsend-exp:latest
-policy: policies/hello-world.yaml
+image: ghcr.io/nonflux/fullsend-code:latest
+policy: policies/code.yaml
 
 host_files:
   - src: env/gcp-vertex.env
     dest: /tmp/workspace/.env.d/gcp-vertex.env
     expand: true
+  - src: env/code-agent.env
+    dest: /tmp/workspace/.env.d/code-agent.env
+    expand: true
   - src: ${GOOGLE_APPLICATION_CREDENTIALS}
     dest: /tmp/workspace/.gcp-credentials.json
-
 skills:
-  - skills/hello-world-summary
+  - skills/code-implementation
 
-validation_loop:
-  script: scripts/validate-output.sh
-  max_iterations: 3
-
-runner_env:
-  VALIDATION_EXPECTED_FAILURES: "1"
-
-timeout_minutes: 5
+timeout_minutes: 30

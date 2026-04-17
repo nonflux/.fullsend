@@ -25,6 +25,7 @@ jobs:
       actions: write
       contents: read
       issues: write
+      packages: read
       pull-requests: write
 
     steps:
@@ -52,12 +53,14 @@ jobs:
           CODE_TARGET_REPO_DIR: target-repo
           CODE_ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.GCP_PROJECT }}
           CODE_CLOUD_ML_REGION: ${{ secrets.GCP_REGION }}
+          CODE_ISSUE_NUMBER: ${{ fromJSON(inputs.event_payload).issue.number }}
         run: bash .fullsend/.github/scripts/setup-agent-env.sh
 
       - name: Run code agent(s)
         uses: ./.fullsend/.github/actions/fullsend
         env:
           GITHUB_ISSUE_URL: ${{ fromJSON(inputs.event_payload).issue.html_url }}
+          ISSUE_NUMBER: ${{ fromJSON(inputs.event_payload).issue.number }}
           GH_TOKEN: ${{ github.token }}
         with:
           agent: code
