@@ -1,0 +1,192 @@
+name: Build Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'images/**/Containerfile'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: >-
+          Which image to build (directory name under images/, e.g. "code").
+          Leave empty to build all images that have a Containerfile.
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  # Image name prefix — all agent images are published as ghcr.io/<owner>/fullsend-<name>
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/fullsend
+  # Fallback base image used when the fullsend-ai/fullsend base Containerfile
+  # doesn't exist yet (PR #239 not merged). Once it lands and the base sandbox
+  # is built on ghcr.io, this can be replaced with the ghcr.io path.
+  FALLBACK_BASE_IMAGE: quay.io/manonru/fullsend-exp:latest
+
+jobs:
+  discover:
+    name: Discover images
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Find Containerfiles
+        id: find
+        env:
+          INPUT_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${INPUT_IMAGE}" ]]; then
+            # Validate: only allow alphanumeric, hyphens, underscores
+            if [[ ! "${INPUT_IMAGE}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "::error::Invalid image name — only alphanumeric, hyphens, and underscores allowed"
+              exit 1
+            fi
+            if [[ ! -f "images/${INPUT_IMAGE}/Containerfile" ]]; then
+              echo "::error::No Containerfile found at images/${INPUT_IMAGE}/Containerfile"
+              exit 1
+            fi
+            echo "images=[\"${INPUT_IMAGE}\"]" >> "${GITHUB_OUTPUT}"
+          else
+            # Auto-discover all images with Containerfiles
+            images="[]"
+            for cf in images/*/Containerfile; do
+              dir="$(basename "$(dirname "${cf}")")"
+              images="$(echo "${images}" | jq -c --arg d "${dir}" '. + [$d]')"
+            done
+            echo "images=${images}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Show discovered images
+        env:
+          IMAGES: ${{ steps.find.outputs.images }}
+        run: echo "Will build:${IMAGES}"
+
+  resolve-base:
+    name: Resolve base image
+    runs-on: ubuntu-latest
+    needs: discover
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      base-image: ${{ steps.resolve.outputs.base_image }}
+    steps:
+      - name: Checkout fullsend source
+        uses: actions/checkout@v6
+        with:
+          repository: fullsend-ai/fullsend
+          path: fullsend-src
+          fetch-depth: 1
+
+      - name: Resolve base image
+        id: resolve
+        run: |
+          if [[ -f "fullsend-src/images/sandbox/Containerfile" ]]; then
+            echo "Base Containerfile found — will build from source"
+            echo "build_base=true" >> "${GITHUB_OUTPUT}"
+            echo "base_image=${{ env.IMAGE_PREFIX }}-sandbox:latest" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::Base Containerfile not found (PR #239 not merged) — using fallback image"
+            echo "build_base=false" >> "${GITHUB_OUTPUT}"
+            echo "base_image=${{ env.FALLBACK_BASE_IMAGE }}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Log in to GitHub Container Registry
+        if: steps.resolve.outputs.build_base == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.resolve.outputs.build_base == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Base image metadata
+        if: steps.resolve.outputs.build_base == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-sandbox
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push base sandbox
+        if: steps.resolve.outputs.build_base == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: fullsend-src/images/sandbox
+          file: fullsend-src/images/sandbox/Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-agent:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: [discover, resolve-base]
+    if: needs.discover.outputs.images != '[]'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.discover.outputs.images) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.image }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: images/${{ matrix.image }}
+          file: images/${{ matrix.image }}/Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            BASE_IMAGE=${{ needs.resolve-base.outputs.base-image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+          FULL_TAG: ${{ env.IMAGE_PREFIX }}-${{ matrix.image }}:latest
+          BASE_USED: ${{ needs.resolve-base.outputs.base-image }}
+        run: |
+          echo "### Built \`${IMAGE_NAME}\` image" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "**Registry:** \`${FULL_TAG}\`" >> "${GITHUB_STEP_SUMMARY}"
+          echo "**Base image:** \`${BASE_USED}\`" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Reference this in your harness YAML:" >> "${GITHUB_STEP_SUMMARY}"
+          echo "\`\`\`yaml" >> "${GITHUB_STEP_SUMMARY}"
+          echo "image: ${FULL_TAG}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "\`\`\`" >> "${GITHUB_STEP_SUMMARY}"
