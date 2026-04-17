@@ -91,6 +91,7 @@ runs:
         AGENT: ${{ inputs.agent }}
       run: |
         set -euo pipefail
+        rm -rf "${GITHUB_WORKSPACE}/output"
         mkdir -p "${GITHUB_WORKSPACE}/output"
         fullsend run "${AGENT}" \
           --fullsend-dir "${GITHUB_WORKSPACE}/.fullsend" \
