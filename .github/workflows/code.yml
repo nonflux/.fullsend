@@ -40,7 +40,57 @@ jobs:
         with:
           repository: ${{ inputs.source_repo }}
           path: target-repo
-          fetch-depth: 1
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate inputs
+        env:
+          ISSUE_NUMBER: ${{ fromJSON(inputs.event_payload).issue.number }}
+          REPO_FULL_NAME: ${{ inputs.source_repo }}
+          GITHUB_ISSUE_URL: ${{ fromJSON(inputs.event_payload).issue.html_url }}
+        run: bash .fullsend/scripts/pre-code.sh
+
+      - name: Extract target repo owner and name
+        id: repo-parts
+        run: |
+          OWNER="${SOURCE_REPO%%/*}"
+          REPO_NAME="${SOURCE_REPO##*/}"
+          echo "owner=${OWNER}" >> "${GITHUB_OUTPUT}"
+          echo "name=${REPO_NAME}" >> "${GITHUB_OUTPUT}"
+        env:
+          SOURCE_REPO: ${{ inputs.source_repo }}
+
+      - name: Generate GitHub App token
+        if: vars.FULLSEND_CODER_CLIENT_ID != ''
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FULLSEND_CODER_CLIENT_ID }}
+          private-key: ${{ secrets.FULLSEND_CODER_APP_PRIVATE_KEY }}
+          owner: ${{ steps.repo-parts.outputs.owner }}
+          repositories: ${{ steps.repo-parts.outputs.name }}
+
+      - name: Resolve push token
+        id: push-token
+        run: |
+          if [ -n "${APP_TOKEN}" ]; then
+            echo "source=github-app" >> "${GITHUB_OUTPUT}"
+            echo "token=${APP_TOKEN}" >> "${GITHUB_OUTPUT}"
+            echo "::add-mask::${APP_TOKEN}"
+            echo "Using GitHub App installation token (PRs will be authored by the App)"
+          elif [ -n "${PAT_TOKEN}" ]; then
+            echo "source=pat" >> "${GITHUB_OUTPUT}"
+            echo "token=${PAT_TOKEN}" >> "${GITHUB_OUTPUT}"
+            echo "::add-mask::${PAT_TOKEN}"
+            echo "::warning::Using PAT as PUSH_TOKEN — PRs will be authored by the PAT owner, not a bot. Configure FULLSEND_CODER_CLIENT_ID + FULLSEND_CODER_APP_PRIVATE_KEY for bot-authored PRs."
+          else
+            echo "source=none" >> "${GITHUB_OUTPUT}"
+            echo "token=" >> "${GITHUB_OUTPUT}"
+            echo "::warning::No push token available — skipping push/PR (Phase 1 mode)"
+          fi
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          PAT_TOKEN: ${{ secrets.PUSH_TOKEN }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -61,6 +111,10 @@ jobs:
         env:
           GITHUB_ISSUE_URL: ${{ fromJSON(inputs.event_payload).issue.html_url }}
           ISSUE_NUMBER: ${{ fromJSON(inputs.event_payload).issue.number }}
+          REPO_FULL_NAME: ${{ inputs.source_repo }}
           GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
+          PUSH_TOKEN_SOURCE: ${{ steps.push-token.outputs.source }}
         with:
           agent: code
+

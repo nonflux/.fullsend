@@ -163,6 +163,14 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest
 
+      - name: Copy shared scripts into build context
+        env:
+          IMAGE_DIR: images/${{ matrix.image }}
+        run: |
+          if [ -f "${IMAGE_DIR}/Containerfile" ] && grep -q 'COPY scan-secrets' "${IMAGE_DIR}/Containerfile"; then
+            cp scripts/scan-secrets "${IMAGE_DIR}/scan-secrets"
+          fi
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

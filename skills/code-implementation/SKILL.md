@@ -248,19 +248,68 @@ scan-secrets <files-you-modified>
 If secrets are detected: hard stop. Remove them, re-scan. Only proceed after
 the scan passes.
 
-**9b. Tests and linters**
+**9b. Pre-commit hooks — MANDATORY**
+
+This step is **not optional**. The target repo's CI runs pre-commit checks on
+every PR. If you skip this, the PR will fail CI.
 
 ```bash
-# Examples — use the actual commands for this repo
-make test        # or: go test ./..., npm test, pytest
-make lint        # or: pre-commit run --files <changed-files>
+test -f .pre-commit-config.yaml && echo "pre-commit config found"
 ```
 
-**If tests fail:**
+If `.pre-commit-config.yaml` exists:
 
-1. Read the failure output. Identify the root cause.
+```bash
+pip install pre-commit 2>/dev/null || pip3 install pre-commit 2>/dev/null
+pre-commit install --install-hooks 2>/dev/null || true
+pre-commit run --files <your-changed-files>
+```
+
+**If hooks auto-fix files** (trailing whitespace, end-of-file fixer, gofmt,
+goimports, etc.): the files on disk are now modified. Re-run the hooks on the
+same files to confirm they pass clean, then re-stage:
+
+```bash
+pre-commit run --files <your-changed-files>   # must pass now
+git add <your-changed-files>
+```
+
+**If hooks report errors** (linter failures, syntax issues): fix them in your
+code, then re-run until all hooks pass.
+
+**Do not proceed to commit until pre-commit passes on all your changed files.**
+Pre-existing failures on files you did not touch are not your responsibility —
+only run hooks on **your** changed files.
+
+**9c. Tests and linters — MANDATORY**
+
+You MUST run the test suite that covers the code you changed. Determine
+which test command to use by reading the Makefile, CONTRIBUTING.md, or
+existing CI workflows.
+
+```bash
+# Use the repo's actual test command — check Makefile or CI config
+make test        # or: go test ./..., npm test, pytest, etc.
+make lint        # or: golangci-lint run, eslint, ruff, etc.
+```
+
+**If tests fail due to missing tools or infrastructure** (not due to your
+code): try the Makefile's setup targets first (`make deps`, `make setup`,
+etc.). If the tool genuinely cannot be installed in the sandbox, note
+this in your commit message body so reviewers know what was not verified:
+
+> Note: <suite-name> tests could not run (<reason>). <other-suite>
+> tests passed. Manual verification of <suite-name> is required.
+
+**Do NOT silently skip tests and commit as if everything passed.** If you
+cannot run the relevant test suite, you must disclose that.
+
+**If tests fail due to your code:**
+
+1. Read the failure output carefully. Understand the root cause.
 2. Fix the issue in your implementation. Do not weaken or skip tests.
-3. Re-run secret scan (9a), then tests. This consumes one retry iteration.
+3. Re-run secret scan (9a), pre-commit (9b), then tests. This consumes
+   one retry iteration.
 4. Repeat until tests pass or the retry limit is reached.
 
 The retry limit is read from the `MAX_RETRIES` environment variable
@@ -270,7 +319,7 @@ irrelevant.
 
 If the retry limit is reached and tests still fail, do not commit. Stop.
 
-**9c. Self-review**
+**9d. Self-review**
 
 Before staging, review your own changes:
 
@@ -325,23 +374,58 @@ differ from what you named. If the scan fails, do not commit.
 The commit message must:
 
 - **Use the repo's commit convention as discovered in step 3.** If
-  `CONTRIBUTING.md`, `CLAUDE.md`, or the existing commit history uses a
-  specific format (e.g., Conventional Commits, Angular-style, ticket
+  `CONTRIBUTING.md`, `CLAUDE.md`, `.gitlint`, or the existing commit history
+  uses a specific format (e.g., Conventional Commits, Angular-style, ticket
   prefixes), follow it.
 - **Fall back to `<type>: <description>` only if no convention was found.**
-- Be concise but descriptive — a reviewer should understand the change from
-  the message alone.
 - Reference the issue number with `Closes #<number>` in the body.
 
+**Line length rules — check `.gitlint` if it exists:**
+
 ```bash
-git commit -s -m "<type>: <description>
+test -f .gitlint && cat .gitlint
+```
+
+Many repos enforce strict line limits (commonly 72 characters) for both the
+title and body. If `.gitlint` has `line-length=72`, every line in your commit
+message — title AND body — must be at most 72 characters. Wrap body text
+manually. Do not write long unbroken lines.
+
+The commit **body** is critical — it becomes the PR description verbatim.
+Write it for human reviewers:
+
+- Explain **what** changed and **why** (not just "fix bug")
+- Describe the root cause of the bug or the motivation for the feature
+- Summarize which files/functions were modified and the approach taken
+- Note any trade-offs, assumptions, or edge cases
+
+```bash
+git commit -s -m "<type>: <short-description>
+
+<What changed and why — wrapped to the line limit.
+Each line must be within the character limit from
+.gitlint. Use multiple short lines, not one long
+paragraph.>
 
 Closes #<number>"
 ```
 
-If pre-commit hooks fail, read the output, fix the issues, re-stage and
-re-commit. If a hook fails on unmodified code (pre-existing failure), verify
-it also fails on the base branch before skipping it.
+**After committing, validate the commit message if gitlint is available:**
+
+```bash
+which gitlint &>/dev/null && gitlint --commit HEAD
+```
+
+If gitlint fails, amend the commit message and re-validate:
+
+```bash
+git commit --amend -s -m "<corrected message>"
+gitlint --commit HEAD
+```
+
+If pre-commit hooks fail on commit, read the output, fix the issues, re-stage
+and re-commit. If a hook fails on unmodified code (pre-existing failure),
+verify it also fails on the base branch before skipping it.
 
 **Do not push the branch.** The post-script handles pushing, PR creation,
 and failure reporting.

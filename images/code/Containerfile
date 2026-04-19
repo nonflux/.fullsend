@@ -3,6 +3,7 @@
 # Extends the base fullsend sandbox image with tools needed by the code agent:
 #   - Go (compile + test target repos written in Go)
 #   - gitleaks (secret scanner, SHA256-verified)
+#   - pre-commit + gitlint (runs repo-defined hooks and validates commit messages)
 #
 # The base image already provides Claude Code, rsync, tirith, and LLM Guard.
 # See images/sandbox/Containerfile in fullsend-ai/fullsend for the base definition.
@@ -76,6 +77,17 @@ RUN curl -fsSL \
     && tar xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
     && chmod +x /usr/local/bin/gitleaks \
     && rm /tmp/gitleaks.tar.gz
+
+# ---------------------------------------------------------------------------
+# pre-commit + gitlint — pre-commit runs repo-defined hooks (formatting,
+# linting, etc.) on changed files before committing. gitlint validates
+# commit message format. Baking them into the image avoids pip installs
+# on every run and ensures they're available even if pip is restricted.
+ARG PRECOMMIT_VERSION=4.5.1
+ARG GITLINT_VERSION=0.19.1
+RUN pip install "pre-commit==${PRECOMMIT_VERSION}" "gitlint-core==${GITLINT_VERSION}" 2>/dev/null \
+    || pip3 install "pre-commit==${PRECOMMIT_VERSION}" "gitlint-core==${GITLINT_VERSION}" 2>/dev/null \
+    || true
 
 # ---------------------------------------------------------------------------
 # scan-secrets — gitleaks wrapper used by the code-implementation skill.
