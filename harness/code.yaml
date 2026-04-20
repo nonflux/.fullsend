@@ -37,4 +37,4 @@ runner_env:
   ISSUE_NUMBER: "${ISSUE_NUMBER}"
   REPO_DIR: "${GITHUB_WORKSPACE}/target-repo"
 
-timeout_minutes: 30
+timeout_minutes: 25

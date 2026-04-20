@@ -8,8 +8,9 @@
 # Security layers (defense-in-depth):
 #   1. Protected-path check — reject if agent touched forbidden paths
 #   2. Authoritative secret scan — final gate before any push
-#   3. Branch validation — refuse to push main/master
-#   4. Token isolation — PUSH_TOKEN never enters the sandbox
+#   3. Authoritative pre-commit — run repo hooks on changed files
+#   4. Branch validation — refuse to push main/master
+#   5. Token isolation — PUSH_TOKEN never enters the sandbox
 #
 # Required environment variables:
 #   PUSH_TOKEN        — token with contents:write + pull-requests:write on target repo
@@ -140,7 +141,45 @@ gitleaks detect --source . --log-opts="${SCAN_RANGE}" --redact
 echo "Secret scan passed — no leaks in agent's commit(s)"
 
 # ---------------------------------------------------------------------------
-# 4. Push branch
+# 4. Authoritative pre-commit check
+# ---------------------------------------------------------------------------
+# The agent runs pre-commit inside the sandbox but may commit with failures
+# disclosed in the message (to avoid timeouts). This is the hard gate: if
+# the repo has a .pre-commit-config.yaml, we run hooks on the agent's
+# changed files on the runner (full network, no sandbox restrictions).
+# If any hook fails, we block the push.
+if [ -f .pre-commit-config.yaml ]; then
+  echo "Running authoritative pre-commit on agent's changed files..."
+
+  if ! command -v pre-commit >/dev/null 2>&1; then
+    echo "Installing pre-commit..."
+    pip install pre-commit 2>/dev/null \
+      || pip3 install pre-commit 2>/dev/null \
+      || pipx install pre-commit 2>/dev/null \
+      || true
+  fi
+
+  if command -v pre-commit >/dev/null 2>&1; then
+    CHANGED_FILE_LIST="$(echo "${CHANGED_FILES}" | tr '\n' ' ')"
+    # shellcheck disable=SC2086
+    if pre-commit run --files ${CHANGED_FILE_LIST}; then
+      echo "Pre-commit passed — all hooks clean"
+    else
+      echo "::error::BLOCKED — pre-commit hooks failed on agent's changes"
+      echo "::error::The agent's code does not pass the repo's pre-commit hooks."
+      echo "::error::Fix the issues and re-run, or update the pre-commit config."
+      exit 1
+    fi
+  else
+    echo "::warning::pre-commit not available on runner — skipping authoritative check"
+    echo "::warning::CI pre-commit will still run on the PR"
+  fi
+else
+  echo "No .pre-commit-config.yaml — skipping pre-commit check"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Push branch
 # ---------------------------------------------------------------------------
 git remote set-url origin \
   "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO_FULL_NAME}.git"
@@ -149,7 +188,7 @@ echo "Pushing branch ${BRANCH}..."
 git push --force-with-lease -u origin "${BRANCH}" 2>&1
 
 # ---------------------------------------------------------------------------
-# 5. Create PR
+# 6. Create PR
 # ---------------------------------------------------------------------------
 export GH_TOKEN="${PUSH_TOKEN}"
 
@@ -217,6 +256,7 @@ Closes #${ISSUE_NUMBER}
 - [x] Branch is not main/master (\`${BRANCH}\`)
 - [x] No protected paths modified
 - [x] Secret scan passed (gitleaks — \`${SCAN_RANGE}\`)
+- [x] Pre-commit hooks passed (authoritative run on runner)
 - [x] Tests ran inside sandbox
 
 <sub>Created by <a href=\"https://github.com/fullsend-ai/fullsend\">fullsend</a> code agent</sub>"

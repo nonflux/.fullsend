@@ -46,11 +46,65 @@ Two modes:
 - `scan-secrets <files>` — scan named files. Use in step 9a.
 - `scan-secrets --staged` — scan the git index. Use in step 10b.
 
+## Progress markers
+
+At the start of each major step, emit a progress marker so the runner
+logs show where you are even if the session times out:
+
+```bash
+echo "::notice::STEP <N>: <title>"
+```
+
+This uses GitHub Actions annotation syntax so it surfaces in the run
+summary. **Do this at steps 1, 3, 5, 9a, 9b, 9c, and 10.**
+
+## Time budget
+
+The sandbox may have a hard timeout enforced by the harness. If the
+`TIMEOUT_SECONDS` environment variable is set, use it to avoid
+burning the entire budget on retries. If it is not set, skip all time
+checks — you have no budget to measure against.
+
+Capture the start time at the very beginning of step 1:
+
+```bash
+AGENT_START=$(date +%s)
+```
+
+Before starting pre-commit (9b), before each retry iteration (9c), and
+before commit (10), check remaining time **only if `TIMEOUT_SECONDS` is
+set**:
+
+```bash
+if [ -n "${TIMEOUT_SECONDS:-}" ]; then
+  ELAPSED=$(( $(date +%s) - AGENT_START ))
+  REMAINING=$(( TIMEOUT_SECONDS - ELAPSED ))
+  echo "::notice::Time check: ${ELAPSED}s elapsed, ${REMAINING}s remaining"
+fi
+```
+
+When `TIMEOUT_SECONDS` is set, use these thresholds (expressed as
+fractions of the budget so they scale to any timeout value):
+
+- **Before 9b (pre-commit):** If less than 40% of the budget remaining,
+  skip pre-commit entirely. The post-script runs it authoritatively.
+- **Before a retry in 9c:** If less than 20% of the budget remaining,
+  do NOT retry. Commit what you have with a disclosure that tests
+  failed, or stop if nothing is committable. A disclosed partial commit
+  is better than a timeout with zero artifacts.
+- **Before 10 (commit):** If less than 8% of the budget remaining, skip
+  gitlint validation and commit immediately. A commit that fails gitlint
+  CI is better than no commit at all.
+
 ## Process
 
 Follow these steps in order. Do not skip steps.
 
 ### 1. Identify the issue
+
+```bash
+echo "::notice::STEP 1: Identify issue"
+```
 
 Determine which issue to implement:
 
@@ -92,6 +146,10 @@ code before relying on it.
 
 ### 3. Discover repo conventions
 
+```bash
+echo "::notice::STEP 3: Discover repo conventions"
+```
+
 Before writing any code, understand how this repository works. Use `Read`
 and `Glob` to inspect project configuration:
 
@@ -127,16 +185,45 @@ issue from a previous run:
 git branch -a | grep "agent/<number>-"
 ```
 
-**If a branch exists:** Check it out and work on top of it. Previous runs
-may have left commits that were later rejected by the review agent. Before
-building on top, read the existing commits (`git log --oneline origin/<target>..HEAD`)
-and understand the delta from the target branch. If a previous commit
-introduced a problem the review agent flagged, fix it in your new commit
-rather than amending.
-
 **If no branch exists:** Proceed to step 5.
 
+**If a branch exists:** Check whether a PR is already open for it:
+
+```bash
+gh pr list --head "<branch-name>" --json number,state --jq '.[0]'
+```
+
+- **Open PR exists for this branch:** The work is already done and under
+  review. **Stop.** Do not add more commits on top of a working
+  implementation — that causes scope creep and timeouts. Your exit state
+  (no new commit) tells the post-script there is nothing new to push.
+- **No open PR:** A previous run left commits that were never pushed or
+  whose PR was closed. Check out the branch and review the delta:
+
+  ```bash
+  git checkout <branch-name>
+  git log --oneline origin/<target>..HEAD
+  git diff origin/<target>..HEAD --stat
+  ```
+
+  Treat the existing code as if you just wrote it. **Skip to step 9**
+  (verification) — run secret scan, tests, and pre-commit on the changed
+  files. If everything passes, the post-script will push the branch and
+  create the PR. If tests or pre-commit fail, fix only the failing issues
+  in a new commit on the same branch — do not rewrite or redo the
+  existing work.
+
+**Scope guardrail:** When working on top of an existing branch, your
+changes must be strictly limited to fixing verification failures or
+completing incomplete work. Do not "improve" a working implementation by
+adding RBAC configs, extra test cases, documentation, or config files
+the issue does not mention.
+
 ### 5. Create branch
+
+```bash
+echo "::notice::STEP 5: Create branch"
+```
 
 If the `BRANCH_NAME` environment variable is set, use it:
 
@@ -239,6 +326,10 @@ Write the code change, then verify it.
 
 **9a. Secret scan — MANDATORY FIRST STEP**
 
+```bash
+echo "::notice::STEP 9a: Secret scan"
+```
+
 Run the secret scan against your changed files before anything else:
 
 ```bash
@@ -248,66 +339,117 @@ scan-secrets <files-you-modified>
 If secrets are detected: hard stop. Remove them, re-scan. Only proceed after
 the scan passes.
 
-**9b. Pre-commit hooks — HARD GATE (non-negotiable)**
+**9b. Pre-commit hooks — best-effort optimization**
 
-Pre-commit is a **hard gate**, the same as secret scanning. The target repo's
-CI runs the exact same pre-commit hooks on every PR. If you skip this or
-commit when pre-commit failed, the PR **will** fail CI. That is a wasted run.
+```bash
+echo "::notice::STEP 9b: Pre-commit hooks"
+```
+
+Pre-commit is a **best-effort optimization**, not a hard gate. The
+post-script (`post-code.sh`) runs an authoritative pre-commit check on
+the GitHub Actions runner before pushing — that is the real security gate.
+Running pre-commit here catches formatting and lint issues early so the
+post-script doesn't reject your commit, but burning excessive time on
+in-sandbox retries is worse than committing with a disclosed failure.
 
 ```bash
 test -f .pre-commit-config.yaml && echo "pre-commit config found"
 ```
 
-If `.pre-commit-config.yaml` exists:
+If no `.pre-commit-config.yaml`, skip to 9c.
+
+**Setup:**
 
 ```bash
 if ! command -v pre-commit &>/dev/null; then
   pip install pre-commit 2>/dev/null || pip3 install pre-commit 2>/dev/null
 fi
-pre-commit run --files <your-changed-files>
 ```
 
-**IMPORTANT: Do NOT run `pip install pre-commit` if pre-commit is already
-on the PATH.** The sandbox image ships a pinned version with network
-policies tuned to it. Installing a different version may invalidate caches
-and trigger downloads that fail. Do NOT run `pre-commit install --install-hooks`
-either — it registers a git hook that can block `git commit`.
+Do NOT run `pip install pre-commit` if pre-commit is already on the PATH.
+The sandbox image ships a pinned version with network policies tuned to it.
+Do NOT run `pre-commit install --install-hooks` — it registers a git hook
+that can block `git commit`.
 
-**Interpreting the output:**
+**STEP A — Pre-format your code before running pre-commit.** Many hooks
+auto-fix files (formatters, trailing-whitespace, end-of-file-fixer). Doing
+this yourself first eliminates an entire re-run cycle. Check the repo's
+`.pre-commit-config.yaml` for which formatters are configured, then run
+them manually on your changed files. For example:
 
-- **Exit 0** — all hooks passed. Proceed.
-- **Exit 1** — hooks ran but some failed. If hooks auto-fixed files (trailing
-  whitespace, end-of-file fixer, gofmt, goimports, etc.), the files on disk are
-  now modified. Re-run to confirm they pass clean, then re-stage:
+```bash
+# Run the repo's formatter directly — language varies:
+#   Go: gofmt -w / goimports -w
+#   Python: black / ruff format
+#   JS/TS: prettier --write
+#   Rust: rustfmt
+# Check what is available on PATH and what the repo uses.
+```
+
+For config files (YAML, JSON, TOML) you create or modify: read 1-2
+existing files in the same directory to match indentation, quoting,
+and line length. Most linter failures on config files come from
+mismatched style.
+
+**STEP B — Run pre-commit once on all changed files:**
+
+```bash
+pre-commit run --files <all-your-changed-files>
+```
+
+Never run per-file. Many linter hooks analyze the entire project per
+invocation — running per-file multiplies that cost.
+
+The first run may be slow (installs hook environments). This is normal.
+
+**STEP C — React to the result:**
+
+- **Exit 0** — all hooks passed. Stage and proceed to 9c.
+- **Exit 1 with auto-fix only** (hooks say "Fixed" / "Fixing"): files
+  are already corrected. Stage them and re-run once to confirm:
 
   ```bash
-  pre-commit run --files <your-changed-files>   # must pass now
-  git add <your-changed-files>
+  git add <fixed-files>
+  pre-commit run --files <all-your-changed-files>
   ```
 
-  If hooks report linter errors or syntax issues: fix them in your code, then
-  re-run until all hooks pass.
+- **Exit 1 with linter errors**: fix only what the linter reports — do
+  not refactor, do not rewrite. Re-run once:
 
-- **Exit 3, "CalledProcessError", network/proxy error, or zero hooks ran** —
-  this means pre-commit did NOT successfully execute. **Do NOT commit.**
-  This is the same severity as a secret scan failure. Do not write
-  "pre-commit couldn't run due to network restrictions" in the commit message
-  and proceed — that just pushes a guaranteed CI failure to the PR. Stop and
-  report the exact error so the team can fix the infrastructure.
+  ```bash
+  pre-commit run --files <all-your-changed-files>
+  ```
 
-**HARD RULES:**
+- **Any other failure** (exit 3, network error, infrastructure error) —
+  log the error and move on to step 9c.
 
-1. **Do NOT commit if pre-commit did not run.** Zero pass/fail results = did
-   not run. Stop.
-2. **Do NOT commit if any hook failed.** Fix the failures first. The CI runs
-   the same hooks — anything you skip will fail there.
-3. **Do NOT rationalize pre-commit failures as "infrastructure limitations"
-   and commit anyway.** That behavior caused PR CI failures in the past and
-   is explicitly forbidden.
-4. **Pre-existing failures on files you did not touch are not your
+**STEP D — After the retry, STOP regardless of the result.**
+
+If the second pre-commit run passes, great. If it fails again, **you are
+done with pre-commit for the entire session**. Log the exact hook name,
+file, and error in your commit message and move on to 9c. Do NOT attempt
+a third run. Do NOT try a different fix. The post-script runs an
+authoritative pre-commit check on the runner before pushing.
+
+**RULES:**
+
+1. **Maximum 2 pre-commit runs total across the entire session.** One
+   initial run, one retry. No more — not even if step 9c sends you back
+   to fix your code. Once you have used your 2 runs, pre-commit is done.
+   Do not re-run it during retries.
+2. **Always disclose.** If pre-commit did not pass, say so in the commit
+   message with the exact error. Never claim hooks passed when they did
+   not.
+3. **Pre-existing failures on files you did not touch are not your
    responsibility.** Only run hooks on **your** changed files.
+4. **Do not refactor to satisfy a linter.** Fix the specific reported
+   error — nothing more.
 
 **9c. Tests and linters — MANDATORY**
+
+```bash
+echo "::notice::STEP 9c: Tests and linters"
+```
 
 You MUST run the test suite that covers the code you changed. Determine
 which test command to use by reading the Makefile, CONTRIBUTING.md, or
@@ -334,14 +476,17 @@ cannot run the relevant test suite, you must disclose that.
 
 1. Read the failure output carefully. Understand the root cause.
 2. Fix the issue in your implementation. Do not weaken or skip tests.
-3. Re-run secret scan (9a), pre-commit (9b), then tests. This consumes
-   one retry iteration.
+3. Re-run secret scan (9a) and then tests (9c). This consumes one retry
+   iteration. **Do NOT re-run pre-commit (9b) during retries** — you
+   already used your 2 pre-commit runs. The post-script handles
+   pre-commit authoritatively on the runner.
 4. Repeat until tests pass or the retry limit is reached.
 
 The retry limit is read from the `MAX_RETRIES` environment variable
-(default: 2 if unset). The harness may also enforce a hard timeout
+(default: 1 if unset). The harness may also enforce a hard timeout
 independently — if the harness kills the session, your retry count is
-irrelevant.
+irrelevant. Prefer committing with a disclosed issue over burning time
+on additional retry iterations.
 
 If the retry limit is reached and tests still fail, do not commit. Stop.
 
@@ -363,6 +508,10 @@ Read every line. Check for:
 If you added more than necessary, revert the extras before staging.
 
 ### 10. Commit
+
+```bash
+echo "::notice::STEP 10: Commit"
+```
 
 Stage **only the files you modified or created** and commit.
 
@@ -481,9 +630,11 @@ Repeat until gitlint passes. Do not leave a commit that you know will
 fail CI. If gitlint is not available, manually verify that no line in
 the title or body exceeds the configured limits.
 
-If pre-commit hooks fail on commit, read the output, fix the issues, re-stage
-and re-commit. If a hook fails on unmodified code (pre-existing failure),
-verify it also fails on the base branch before skipping it.
+If a git hook fires during `git commit` and fails (e.g., the repo shipped
+a `.git/hooks/pre-commit`), do NOT enter a fix-and-retry loop. You already
+ran pre-commit in step 9b (which is the same check). Commit with
+`--no-verify` to bypass the git hook and disclose the failure in the commit
+message. The post-script runs an authoritative pre-commit on the runner.
 
 **Do not push the branch.** The post-script handles pushing, PR creation,
 and failure reporting.

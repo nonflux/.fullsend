@@ -603,6 +603,32 @@ revealed several improvements needed:
    commit message so reviewers and the review bot know what wasn't verified.
    Also added Kubernetes-specific test pitfalls (Status subresource handling).
 
+19. **Authoritative pre-commit gate in post-script** — The agent runs
+   pre-commit inside the sandbox but may commit with failures disclosed
+   (to prevent timeout blackouts). To ensure security hooks always pass,
+   `post-code.sh` now runs an authoritative `pre-commit run --files` on
+   the agent's changed files on the GitHub Actions runner (full network,
+   no sandbox restrictions) **before** pushing the branch or creating a
+   PR. If any hook fails, the push is blocked entirely. This is a
+   defense-in-depth layer: the agent tries to fix failures (2 retries),
+   and the post-script is the hard gate that guarantees compliance.
+
+20. **Pre-commit timeout optimization** — Analysis of PRs #28–#37
+   revealed a clear pattern: every run where the agent modified
+   `config/rbac/snapshotgc_rbac.yaml` (4 files) timed out, while runs
+   with only 3 Go/test files succeeded. Root cause: the agent was
+   spending too many cycles retrying pre-commit without a hard cap,
+   and linter hooks like golangci-lint compile the entire Go package
+   per invocation. SKILL.md now uses a structured 4-step approach:
+   (A) pre-format Go files with gofmt/goimports before pre-commit to
+   eliminate auto-fix churn, (B) run all files at once (not per-file —
+   per-file multiplies golangci-lint compilations by N), (C) distinguish
+   auto-fixes from linter errors, (D) hard cap of 3 total pre-commit
+   invocations (initial + 2 retries). Also added guidance to match
+   existing YAML style before creating new YAML files, and an explicit
+   rule against refactoring to satisfy linters (which introduces new
+   findings and restarts the cycle).
+
 ### Known remaining issues
 
 - **Sandbox image must include repo-specific test tooling** — The sandbox
