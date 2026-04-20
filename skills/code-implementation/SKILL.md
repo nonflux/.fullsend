@@ -248,10 +248,11 @@ scan-secrets <files-you-modified>
 If secrets are detected: hard stop. Remove them, re-scan. Only proceed after
 the scan passes.
 
-**9b. Pre-commit hooks — MANDATORY**
+**9b. Pre-commit hooks — HARD GATE (non-negotiable)**
 
-This step is **not optional**. The target repo's CI runs pre-commit checks on
-every PR. If you skip this, the PR will fail CI.
+Pre-commit is a **hard gate**, the same as secret scanning. The target repo's
+CI runs the exact same pre-commit hooks on every PR. If you skip this or
+commit when pre-commit failed, the PR **will** fail CI. That is a wasted run.
 
 ```bash
 test -f .pre-commit-config.yaml && echo "pre-commit config found"
@@ -260,26 +261,51 @@ test -f .pre-commit-config.yaml && echo "pre-commit config found"
 If `.pre-commit-config.yaml` exists:
 
 ```bash
-pip install pre-commit 2>/dev/null || pip3 install pre-commit 2>/dev/null
-pre-commit install --install-hooks 2>/dev/null || true
+if ! command -v pre-commit &>/dev/null; then
+  pip install pre-commit 2>/dev/null || pip3 install pre-commit 2>/dev/null
+fi
 pre-commit run --files <your-changed-files>
 ```
 
-**If hooks auto-fix files** (trailing whitespace, end-of-file fixer, gofmt,
-goimports, etc.): the files on disk are now modified. Re-run the hooks on the
-same files to confirm they pass clean, then re-stage:
+**IMPORTANT: Do NOT run `pip install pre-commit` if pre-commit is already
+on the PATH.** The sandbox image ships a pinned version with network
+policies tuned to it. Installing a different version may invalidate caches
+and trigger downloads that fail. Do NOT run `pre-commit install --install-hooks`
+either — it registers a git hook that can block `git commit`.
 
-```bash
-pre-commit run --files <your-changed-files>   # must pass now
-git add <your-changed-files>
-```
+**Interpreting the output:**
 
-**If hooks report errors** (linter failures, syntax issues): fix them in your
-code, then re-run until all hooks pass.
+- **Exit 0** — all hooks passed. Proceed.
+- **Exit 1** — hooks ran but some failed. If hooks auto-fixed files (trailing
+  whitespace, end-of-file fixer, gofmt, goimports, etc.), the files on disk are
+  now modified. Re-run to confirm they pass clean, then re-stage:
 
-**Do not proceed to commit until pre-commit passes on all your changed files.**
-Pre-existing failures on files you did not touch are not your responsibility —
-only run hooks on **your** changed files.
+  ```bash
+  pre-commit run --files <your-changed-files>   # must pass now
+  git add <your-changed-files>
+  ```
+
+  If hooks report linter errors or syntax issues: fix them in your code, then
+  re-run until all hooks pass.
+
+- **Exit 3, "CalledProcessError", network/proxy error, or zero hooks ran** —
+  this means pre-commit did NOT successfully execute. **Do NOT commit.**
+  This is the same severity as a secret scan failure. Do not write
+  "pre-commit couldn't run due to network restrictions" in the commit message
+  and proceed — that just pushes a guaranteed CI failure to the PR. Stop and
+  report the exact error so the team can fix the infrastructure.
+
+**HARD RULES:**
+
+1. **Do NOT commit if pre-commit did not run.** Zero pass/fail results = did
+   not run. Stop.
+2. **Do NOT commit if any hook failed.** Fix the failures first. The CI runs
+   the same hooks — anything you skip will fail there.
+3. **Do NOT rationalize pre-commit failures as "infrastructure limitations"
+   and commit anyway.** That behavior caused PR CI failures in the past and
+   is explicitly forbidden.
+4. **Pre-existing failures on files you did not touch are not your
+   responsibility.** Only run hooks on **your** changed files.
 
 **9c. Tests and linters — MANDATORY**
 
@@ -380,32 +406,51 @@ The commit message must:
 - **Fall back to `<type>: <description>` only if no convention was found.**
 - Reference the issue number with `Closes #<number>` in the body.
 
-**Line length rules — check `.gitlint` if it exists:**
+**Title length — check `.gitlint` if it exists:**
 
 ```bash
 test -f .gitlint && cat .gitlint
 ```
 
-Many repos enforce strict line limits (commonly 72 characters) for both the
-title and body. If `.gitlint` has `line-length=72`, every line in your commit
-message — title AND body — must be at most 72 characters. Wrap body text
-manually. Do not write long unbroken lines.
+Most repos enforce a title length limit (commonly 72 characters). If
+`.gitlint` has `[title-max-length] line-length=72`, keep the title
+(first line) under that limit. Use a concise `<type>: <description>`
+that fits.
 
-The commit **body** is critical — it becomes the PR description verbatim.
-Write it for human reviewers:
+**Body line length — comply with the repo's gitlint config:**
 
+If `.gitlint` has a `[body-max-line-length]` rule (e.g. `line-length=72`),
+you **MUST** hard-wrap body text at that limit. This is enforced by CI.
+The post-script will unwrap the body when building the PR description,
+so your hard-wrapped commit body will still render as nice prose on
+GitHub.
+
+Hard-wrap guidelines when a limit is configured:
+- Break lines at word boundaries before hitting the limit
+- List items that exceed the limit: start the continuation on the next
+  line, indented by 2 spaces
+- URLs that exceed the limit may remain on one line (gitlint usually
+  allows this via `ignore-body-lines`)
+- `Closes #N` and similar trailers: keep on one line
+- **`Signed-off-by:`** — `git commit -s` auto-generates this from
+  `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL`. If the resulting line
+  exceeds the body-max-line-length, gitlint CI will reject the commit.
+  Before committing, check: if the `Signed-off-by` trailer would exceed
+  the limit, omit the `-s` flag and write a shorter trailer manually, or
+  omit it entirely if the repo does not require DCO sign-off
+
+The commit body should:
 - Explain **what** changed and **why** (not just "fix bug")
-- Describe the root cause of the bug or the motivation for the feature
-- Summarize which files/functions were modified and the approach taken
+- Describe the root cause or motivation
+- Summarize which files/functions were modified and the approach
 - Note any trade-offs, assumptions, or edge cases
 
 ```bash
 git commit -s -m "<type>: <short-description>
 
-<What changed and why — wrapped to the line limit.
-Each line must be within the character limit from
-.gitlint. Use multiple short lines, not one long
-paragraph.>
+<What changed and why. Hard-wrap at the limit from
+.gitlint if one is configured. Write substantive
+content for human reviewers.>
 
 Closes #<number>"
 ```
@@ -416,12 +461,25 @@ Closes #<number>"
 which gitlint &>/dev/null && gitlint --commit HEAD
 ```
 
-If gitlint fails, amend the commit message and re-validate:
+If gitlint fails, **amend immediately** to fix:
 
 ```bash
-git commit --amend -s -m "<corrected message>"
+git commit --amend -m "<fixed title>
+
+<fixed body — respect ALL line-length rules>"
 gitlint --commit HEAD
 ```
+
+Common gitlint failures:
+- **B1 body-max-line-length** on `Signed-off-by:` — the auto-generated
+  trailer is too long. Re-amend without `-s` and either add a shorter
+  sign-off manually or omit it if the repo doesn't require DCO.
+- **T1 title-max-length** — shorten the title.
+- **B1 body-max-line-length** on prose — re-wrap the offending line.
+
+Repeat until gitlint passes. Do not leave a commit that you know will
+fail CI. If gitlint is not available, manually verify that no line in
+the title or body exceeds the configured limits.
 
 If pre-commit hooks fail on commit, read the output, fix the issues, re-stage
 and re-commit. If a hook fails on unmodified code (pre-existing failure),

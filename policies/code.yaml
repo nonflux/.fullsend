@@ -8,6 +8,8 @@ version: 1
 #     disallowedTools bypass via raw HTTP with the injected GH_TOKEN)
 #   - gitleaks releases (fallback download if not pre-installed in image)
 #   - npm/PyPI/Go registries (running tests may pull dev dependencies)
+#   - pre-commit binary needs github (clone hook repos), package registries
+#     (pip install hook deps), and GitHub releases (hook binaries like gitleaks)
 
 filesystem_policy:
   include_workdir: true
@@ -65,6 +67,7 @@ network_policies:
       - path: "**/gh"
       - path: "**/git"
       - path: "**/node"
+      - path: "**/pre-commit"
 
   gitleaks_releases:
     name: gitleaks-releases
@@ -87,6 +90,7 @@ network_policies:
     binaries:
       - path: "**/curl"
       - path: "**/wget"
+      - path: "**/pre-commit"
 
   package_registries:
     name: package-registries
@@ -128,4 +132,6 @@ network_policies:
       - path: "**/pip3"
       - path: "**/python"
       - path: "**/python3"
+      - path: "**/python3.*"
       - path: "**/go"
+      - path: "**/pre-commit"

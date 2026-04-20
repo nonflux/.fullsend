@@ -26,10 +26,14 @@ FROM ${BASE_IMAGE}
 USER root
 
 # ---------------------------------------------------------------------------
-# CA certificates — git uses system OpenSSL for HTTPS, which needs CA certs
-# at a known path. Without this, `git fetch/push` fails with
-# "server certificate verification failed. CAfile: none".
-# curl and gh bundle their own CAs so they work regardless; git does not.
+# CA certificates — git 2.43 on Ubuntu Noble is linked against
+# libcurl-gnutls which does NOT read SSL_CERT_FILE. It needs either
+# GIT_SSL_CAINFO env or http.sslCAInfo git config to find the CA bundle.
+#
+# The OpenShell sandbox does TLS termination for network policy and
+# injects its own CA at /etc/openshell-tls/ca-bundle.pem (NVIDIA/OpenShell#790).
+# The env file (code-agent.env) sets GIT_SSL_CAINFO dynamically at runtime.
+# The git system config below is a build-time fallback for the system bundle.
 RUN if command -v apt-get >/dev/null 2>&1; then \
       apt-get update -qq && apt-get install -y -qq ca-certificates && rm -rf /var/lib/apt/lists/*; \
     elif command -v apk >/dev/null 2>&1; then \
@@ -38,6 +42,9 @@ RUN if command -v apt-get >/dev/null 2>&1; then \
       dnf install -y ca-certificates && dnf clean all; \
     fi \
     && update-ca-certificates 2>/dev/null || true
+# Set the system CA bundle as git's default sslCAInfo. At runtime, the
+# env file overrides this with the OpenShell bundle if present.
+RUN git config --system http.sslCAInfo /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Go toolchain — needed to compile and run tests in Go-based target repos.
@@ -88,6 +95,14 @@ ARG GITLINT_VERSION=0.19.1
 RUN pip install "pre-commit==${PRECOMMIT_VERSION}" "gitlint-core==${GITLINT_VERSION}" 2>/dev/null \
     || pip3 install "pre-commit==${PRECOMMIT_VERSION}" "gitlint-core==${GITLINT_VERSION}" 2>/dev/null \
     || true
+# The venv's bin dir (/sandbox/.venv/bin) is not on PATH inside the
+# sandbox Bash shell. Symlink the binaries into /usr/local/bin so the
+# agent can find them without PATH manipulation.
+RUN for bin in pre-commit gitlint; do \
+      if [ -x "/sandbox/.venv/bin/$bin" ]; then \
+        ln -sf "/sandbox/.venv/bin/$bin" "/usr/local/bin/$bin"; \
+      fi; \
+    done
 
 # ---------------------------------------------------------------------------
 # scan-secrets — gitleaks wrapper used by the code-implementation skill.
