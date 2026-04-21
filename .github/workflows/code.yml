@@ -115,6 +115,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
           PUSH_TOKEN_SOURCE: ${{ steps.push-token.outputs.source }}
+          TARGET_BRANCH: main
         with:
           agent: code
 

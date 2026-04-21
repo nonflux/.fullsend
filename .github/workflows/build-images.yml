@@ -18,9 +18,9 @@ env:
   REGISTRY: ghcr.io
   # Image name prefix — all agent images are published as ghcr.io/<owner>/fullsend-<name>
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/fullsend
-  # Fallback base image used when the fullsend-ai/fullsend base Containerfile
-  # doesn't exist yet (PR #239 not merged). Once it lands and the base sandbox
-  # is built on ghcr.io, this can be replaced with the ghcr.io path.
+  # Fallback base image used when the upstream base sandbox build fails or the
+  # Containerfile doesn't exist. Replace with the ghcr.io path once the
+  # upstream base image builds reliably.
   FALLBACK_BASE_IMAGE: quay.io/manonru/fullsend-exp:latest
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      base-image: ${{ steps.resolve.outputs.base_image }}
+      base-image: ${{ steps.final.outputs.base_image }}
     steps:
       - name: Checkout fullsend source
         uses: actions/checkout@v6
@@ -87,18 +87,18 @@ jobs:
         id: resolve
         run: |
           if [[ -f "fullsend-src/images/sandbox/Containerfile" ]]; then
-            echo "Base Containerfile found — will build from source"
+            echo "Base Containerfile found — will attempt build from source"
             echo "build_base=true" >> "${GITHUB_OUTPUT}"
-            echo "base_image=${{ env.IMAGE_PREFIX }}-sandbox:latest" >> "${GITHUB_OUTPUT}"
+            echo "base_image=${{ env.IMAGE_PREFIX }}-sandbox:${{ github.sha }}" >> "${GITHUB_OUTPUT}"
           else
-            echo "::notice::Base Containerfile not found (PR #239 not merged) — using fallback image"
+            echo "::notice::Base Containerfile not found — using fallback image"
             echo "build_base=false" >> "${GITHUB_OUTPUT}"
             echo "base_image=${{ env.FALLBACK_BASE_IMAGE }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Log in to GitHub Container Registry
         if: steps.resolve.outputs.build_base == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -106,12 +106,12 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.resolve.outputs.build_base == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Base image metadata
         if: steps.resolve.outputs.build_base == 'true'
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}-sandbox
           tags: |
@@ -119,8 +119,10 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push base sandbox
+        id: build-base
         if: steps.resolve.outputs.build_base == 'true'
-        uses: docker/build-push-action@v6
+        continue-on-error: true
+        uses: docker/build-push-action@v7
         with:
           context: fullsend-src/images/sandbox
           file: fullsend-src/images/sandbox/Containerfile
@@ -128,6 +130,22 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Fallback on base build failure
+        if: steps.build-base.outcome == 'failure'
+        id: fallback
+        run: |
+          echo "::warning::Base sandbox build failed — falling back to ${{ env.FALLBACK_BASE_IMAGE }}"
+          echo "base_image=${{ env.FALLBACK_BASE_IMAGE }}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set final base image
+        id: final
+        run: |
+          if [[ "${{ steps.fallback.outputs.base_image }}" != "" ]]; then
+            echo "base_image=${{ steps.fallback.outputs.base_image }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "base_image=${{ steps.resolve.outputs.base_image }}" >> "${GITHUB_OUTPUT}"
+          fi
 
   build-agent:
     name: Build ${{ matrix.image }}
@@ -145,18 +163,18 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}-${{ matrix.image }}
           tags: |
@@ -172,7 +190,7 @@ jobs:
           fi
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: images/${{ matrix.image }}
           file: images/${{ matrix.image }}/Containerfile
