@@ -1,0 +1,23 @@
+name: Test Vars
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check FULLSEND_MINT_URL
+        run: |
+          URL="${{ vars.FULLSEND_MINT_URL }}"
+          if [[ -n "$URL" ]]; then
+            echo "MINT_URL is set (length: ${#URL})"
+          else
+            echo "MINT_URL is EMPTY"
+          fi
+      - name: Check with env
+        env:
+          MINT: ${{ vars.FULLSEND_MINT_URL }}
+        run: |
+          if [[ -n "$MINT" ]]; then
+            echo "MINT via env is set (length: ${#MINT})"
+          else
+            echo "MINT via env is EMPTY"
+          fi
