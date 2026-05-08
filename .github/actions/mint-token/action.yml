@@ -50,7 +50,7 @@ runs:
         REPOS_JSON=$(echo "$REPOS" | jq -Rc 'split(",") | map(select(length > 0))')
         BODY=$(jq -nc --arg role "$ROLE" --argjson repos "$REPOS_JSON" \
           '{role: $role, repos: $repos}')
-        TOKEN=$(curl -sSf --retry 3 --retry-delay 2 --retry-all-errors \
+        TOKEN=$(curl -sSf --retry 5 --retry-delay 5 --retry-all-errors \
           -H "Authorization: Bearer $OIDC_TOKEN" \
           -H "Content-Type: application/json" \
           -d "$BODY" \
