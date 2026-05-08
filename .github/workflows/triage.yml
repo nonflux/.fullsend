@@ -15,7 +15,7 @@ on:
         type: string
 
 concurrency:
-  group: fullsend-triage-${{ fromJSON(inputs.event_payload).issue.number }}
+  group: fullsend-triage-${{ inputs.source_repo }}-${{ fromJSON(inputs.event_payload).issue.number }}
   cancel-in-progress: true
 
 jobs:
