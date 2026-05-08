@@ -1,0 +1,218 @@
+# Dispatcher workflow that fans out to agent workflows based on stage
+name: Dispatch
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: 'Stage name (triage, code, review, fix, retro)'
+        required: true
+        type: string
+      trigger_source:
+        description: 'Trigger source username (for fix stage audit trail)'
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Mint dispatch token via OIDC
+        id: oidc-mint
+        env:
+          MINT_URL: ${{ vars.FULLSEND_MINT_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$MINT_URL" ]]; then
+            echo "::error::FULLSEND_MINT_URL org variable is not set"
+            exit 1
+          fi
+          OIDC_TOKEN=$(curl -sSf --retry 3 --retry-delay 2 --retry-all-errors \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=fullsend-mint" | jq -r '.value')
+          if [[ -z "$OIDC_TOKEN" || "$OIDC_TOKEN" == "null" ]]; then
+            echo "::error::Failed to obtain OIDC token"
+            exit 1
+          fi
+          echo "::add-mask::$OIDC_TOKEN"
+          TOKEN=$(curl -sS -f --retry 3 --retry-delay 2 --retry-all-errors \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"role":"fullsend","repos":[".fullsend"]}' \
+            "${MINT_URL}/v1/token" | jq -r '.token')
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "::error::Token mint returned no token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          token: ${{ steps.oidc-mint.outputs.token }}
+
+      - name: Validate inputs
+        env:
+          STAGE: ${{ inputs.stage }}
+          TRIGGER_SOURCE: ${{ inputs.trigger_source }}
+        run: |
+          set -euo pipefail
+
+          # Validate stage name format (alphanumeric, underscore, hyphen only)
+          if [[ ! "$STAGE" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+            echo "::error::Invalid stage name: must start with lowercase letter and contain only [a-z0-9_-]"
+            exit 1
+          fi
+
+          # Validate trigger_source format if provided (GitHub username with optional [bot] suffix)
+          if [[ -n "${TRIGGER_SOURCE:-}" ]]; then
+            if [[ ! "$TRIGGER_SOURCE" =~ ^[a-zA-Z0-9_-]+(\[bot\])?$ ]]; then
+              echo "::error::Invalid trigger_source format: must be alphanumeric with optional [bot] suffix"
+              exit 1
+            fi
+          fi
+
+      - name: Check kill switch
+        # Intentionally fail-closed: if config.yaml is missing or corrupt,
+        # set -euo pipefail aborts the step → job fails → dispatch blocked.
+        run: |
+          set -euo pipefail
+          KILL_SWITCH=$(yq '.kill_switch // false' config.yaml)
+          if [[ "$KILL_SWITCH" == "true" ]]; then
+            echo "::error::Kill switch is active — all agent dispatch halted"
+            echo "::error::Set kill_switch: false in config.yaml to resume"
+            exit 1
+          fi
+
+      - name: Check role is enabled
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          STAGE_ROLE="$STAGE"
+          case "$STAGE" in
+            code) STAGE_ROLE="coder" ;;
+          esac
+
+          ROLES=$(yq '.defaults.roles[]' config.yaml 2>/dev/null || echo "")
+          if [[ -n "$ROLES" ]] && ! echo "$ROLES" | grep -Fqx "$STAGE_ROLE"; then
+            echo "::error::Stage '$STAGE' (role: $STAGE_ROLE) is not in defaults.roles — dispatch blocked"
+            exit 1
+          fi
+
+      - name: Block fork PRs for fix stage
+        if: inputs.stage == 'fix' && github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ steps.oidc-mint.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          HEAD_REPO=$(gh api "repos/$SOURCE_REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name' 2>/dev/null || true)
+          BASE_REPO=$(gh api "repos/$SOURCE_REPO/pulls/$PR_NUMBER" --jq '.base.repo.full_name' 2>/dev/null || true)
+          if [[ -n "$HEAD_REPO" && -n "$BASE_REPO" && "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "::error::Fork PR detected (head=$HEAD_REPO, base=$BASE_REPO) — fix agent blocked"
+            exit 1
+          fi
+
+      - name: Find and trigger agent workflows for stage
+        env:
+          GH_TOKEN: ${{ steps.oidc-mint.outputs.token }}
+          STAGE: ${{ inputs.stage }}
+          EVENT_TYPE: ${{ github.event_name }}
+          SOURCE_REPO: ${{ github.repository }}
+          TRIGGER_SOURCE: ${{ inputs.trigger_source }}
+          DISPATCH_REPO: ${{ job.workflow_repository }}
+          FULL_EVENT: ${{ toJSON(github.event) }}
+        run: |
+          set -euo pipefail
+
+          # Build a minimal event payload with only the fields agent workflows need.
+          # Keeps well under the 65KB workflow_dispatch input limit.
+          EVENT_PAYLOAD=$(printf '%s\n' "$FULL_EVENT" | jq -c '{
+            issue: (.issue // null | if . then {number, html_url} else null end),
+            pull_request: (.pull_request // null | if . then {number, html_url} else null end),
+            comment: (.comment // null | if . then {body: .body[:4096]} else null end)
+          }')
+
+          echo "Scanning for workflows with stage: $STAGE"
+
+          dispatched=0
+          dispatched_workflows=()
+          scanned=0
+          skipped=0
+
+          for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            # Skip if file doesn't exist (glob expansion when no matches)
+            [[ -f "$workflow" ]] || continue
+
+            scanned=$((scanned + 1))
+            workflow_name=$(basename "$workflow")
+
+            # Never dispatch ourselves (guard against accidental stage marker)
+            if [[ "$workflow_name" == "dispatch.yml" || "$workflow_name" == "dispatch.yaml" ]]; then
+              echo "Skipped $workflow_name (self-dispatch guard)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            # Extract stage from comment (first line with # fullsend-stage:)
+            # Format: # fullsend-stage: <stage-name>
+            # Stage names: lowercase letter + [a-z0-9_-]*
+            # || true prevents pipefail abort when grep finds no match
+            workflow_stage=$(grep -E '^# fullsend-stage:' "$workflow" | head -1 | sed -n 's/^# fullsend-stage: *\([a-z][a-z0-9_-]*\).*/\1/p' || true)
+
+            # Skip if no stage marker
+            if [[ -z "$workflow_stage" ]]; then
+              echo "Skipped $workflow_name (no stage marker)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            # Skip if stage doesn't match
+            if [[ "$workflow_stage" != "$STAGE" ]]; then
+              echo "Skipped $workflow_name (stage=$workflow_stage, wanted=$STAGE)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            echo "Triggering $workflow_name for stage $STAGE"
+
+            # Build gh workflow run arguments
+            DISPATCH_ARGS=(
+              --repo "$DISPATCH_REPO"
+              -f event_type="$EVENT_TYPE"
+              -f source_repo="$SOURCE_REPO"
+              -f event_payload="$EVENT_PAYLOAD"
+            )
+
+            # Forward trigger_source if provided (fix stage only)
+            if [[ -n "${TRIGGER_SOURCE:-}" ]] && [[ "$STAGE" == "fix" ]]; then
+              DISPATCH_ARGS+=(-f trigger_source="$TRIGGER_SOURCE")
+            fi
+
+            if ! output=$(gh workflow run "$workflow_name" "${DISPATCH_ARGS[@]}" 2>&1); then
+              echo "::error::Failed to dispatch $workflow_name: $output"
+              exit 1
+            fi
+            echo "::notice::Dispatched ${workflow_name} → ${output}"
+            dispatched=$((dispatched + 1))
+            dispatched_workflows+=("$workflow_name")
+          done
+
+          echo "Scanned $scanned workflow(s), skipped $skipped, dispatched $dispatched"
+
+          if [[ $dispatched -eq 0 ]]; then
+            echo "::error::No workflows found for stage: $STAGE"
+            exit 1
+          fi
+
+          echo "Successfully dispatched $dispatched workflow(s) for stage $STAGE: ${dispatched_workflows[*]}"
