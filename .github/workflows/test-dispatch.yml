@@ -1,0 +1,12 @@
+name: Test Dispatch
+on:
+  workflow_call:
+    inputs:
+      stage:
+        required: true
+        type: string
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Stage is ${{ inputs.stage }}"
