@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   triage:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@v1
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@adr-0030-reusable-workflows
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
