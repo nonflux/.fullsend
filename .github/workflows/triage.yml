@@ -15,7 +15,7 @@ on:
 
 jobs:
   triage:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@adr-0030-reusable-workflows
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@d3e913467e4ee7f945dc64f2f472f19a4bbab2d7
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
