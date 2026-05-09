@@ -1,4 +1,3 @@
-# fullsend-stage: triage
 name: Triage
 
 on:
@@ -14,10 +13,6 @@ on:
         required: true
         type: string
 
-concurrency:
-  group: fullsend-triage-${{ inputs.source_repo }}-${{ fromJSON(inputs.event_payload).issue.number }}
-  cancel-in-progress: true
-
 jobs:
   triage:
     uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@adr-0030-reusable-workflows
@@ -26,6 +21,6 @@ jobs:
       source_repo: ${{ inputs.source_repo }}
       event_payload: ${{ inputs.event_payload }}
       mint_url: ${{ vars.FULLSEND_MINT_URL }}
-      gcp_auth_mode: ${{ vars.FULLSEND_GCP_AUTH_MODE }}
-      gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
+      gcp_auth_mode: wif
+      gcp_region: global
     secrets: inherit
