@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   fix:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@adr-0030-reusable-workflows
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@v1
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}

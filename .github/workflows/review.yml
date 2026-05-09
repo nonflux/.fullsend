@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   review:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-review.yml@adr-0030-reusable-workflows
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-review.yml@v1
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}

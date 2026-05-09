@@ -14,19 +14,13 @@ on:
         required: true
         type: string
 
-permissions:
-  actions: write
-  contents: read
-  id-token: write
-  issues: write
-
 concurrency:
   group: fullsend-triage-${{ inputs.source_repo }}-${{ fromJSON(inputs.event_payload).issue.number }}
   cancel-in-progress: true
 
 jobs:
   triage:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@adr-0030-reusable-workflows
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@v1
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
