@@ -38,7 +38,5 @@ repos:
         enabled: false
     build-definitions:
         enabled: true
-    fullsend-config:
-        enabled: true
     integration-service:
         enabled: true
