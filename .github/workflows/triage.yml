@@ -1,6 +1,12 @@
 # fullsend-stage: triage
 name: Triage
 
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+  issues: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -13,12 +19,6 @@ on:
       event_payload:
         required: true
         type: string
-
-permissions:
-  actions: write
-  contents: read
-  id-token: write
-  issues: write
 
 concurrency:
   group: fullsend-triage-${{ inputs.source_repo }}-${{ fromJSON(inputs.event_payload).issue.number }}
