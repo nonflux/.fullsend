@@ -26,6 +26,6 @@ jobs:
       source_repo: ${{ inputs.source_repo }}
       event_payload: ${{ inputs.event_payload }}
       mint_url: ${{ vars.FULLSEND_MINT_URL }}
-      gcp_auth_mode: ${{ vars.FULLSEND_GCP_AUTH_MODE || 'sa_key' }}
+      gcp_auth_mode: ${{ vars.FULLSEND_GCP_AUTH_MODE }}
       gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
     secrets: inherit
