@@ -1,2 +1,2 @@
 # .fullsend
-fullsend configuration for nonflux
+Cleared for re-install test.
