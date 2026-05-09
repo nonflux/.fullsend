@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   triage:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@adr-0030-reusable-workflows
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-triage.yml@v1
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
@@ -34,4 +34,8 @@ jobs:
       mint_url: ${{ vars.FULLSEND_MINT_URL }}
       gcp_auth_mode: ${{ vars.FULLSEND_GCP_AUTH_MODE || 'sa_key' }}
       gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
-    secrets: inherit
+    secrets:
+      FULLSEND_GCP_WIF_PROVIDER: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+      FULLSEND_GCP_WIF_SA_EMAIL: ${{ secrets.FULLSEND_GCP_WIF_SA_EMAIL }}
+      FULLSEND_GCP_SA_KEY_JSON: ${{ secrets.FULLSEND_GCP_SA_KEY_JSON }}
+      FULLSEND_GCP_PROJECT_ID: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
