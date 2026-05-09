@@ -1,0 +1,40 @@
+# fullsend organization configuration
+# https://github.com/fullsend-ai/fullsend
+#
+# This file is managed by fullsend. Manual edits may be overwritten.
+version: "1"
+dispatch:
+    platform: github-actions
+    mode: oidc-mint
+defaults:
+    roles:
+        - fullsend
+        - triage
+        - coder
+        - review
+        - fix
+    max_implementation_retries: 2
+    auto_merge: false
+agents:
+    - role: fullsend
+      name: nonflux-fullsend
+      slug: nonflux-fullsend
+    - role: triage
+      name: nonflux-triage
+      slug: nonflux-triage
+    - role: coder
+      name: nonflux-coder
+      slug: nonflux-coder
+    - role: review
+      name: nonflux-review
+      slug: nonflux-review
+    - role: fix
+      name: nonflux-fix
+      slug: nonflux-fix
+repos:
+    .fullsend:
+        enabled: false
+    build-definitions:
+        enabled: true
+    integration-service:
+        enabled: true
