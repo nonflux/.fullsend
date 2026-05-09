@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   retro:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-retro.yml@v1
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-retro.yml@adr-0030-reusable-workflows
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
