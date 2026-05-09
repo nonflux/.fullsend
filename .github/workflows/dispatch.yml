@@ -131,17 +131,17 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
           TRIGGER_SOURCE: ${{ inputs.trigger_source }}
           DISPATCH_REPO: ${{ job.workflow_repository }}
-          FULL_EVENT: ${{ toJSON(github.event) }}
         run: |
           set -euo pipefail
 
           # Build a minimal event payload with only the fields agent workflows need.
-          # Keeps well under the 65KB workflow_dispatch input limit.
-          EVENT_PAYLOAD=$(printf '%s\n' "$FULL_EVENT" | jq -c '{
+          # Read from $GITHUB_EVENT_PATH (on-disk JSON) to avoid expression-context
+          # injection risks from toJSON(github.event).
+          EVENT_PAYLOAD=$(jq -c '{
             issue: (.issue // null | if . then {number, html_url} else null end),
             pull_request: (.pull_request // null | if . then {number, html_url} else null end),
             comment: (.comment // null | if . then {body: .body[:4096]} else null end)
-          }')
+          }' "$GITHUB_EVENT_PATH")
 
           echo "Scanning for workflows with stage: $STAGE"
 
