@@ -33,6 +33,7 @@ jobs:
             echo "::error::FULLSEND_MINT_URL org variable is not set"
             exit 1
           fi
+          echo "::add-mask::$MINT_URL"
           OIDC_TOKEN=$(curl -sSf --retry 3 --retry-delay 2 --retry-all-errors \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=fullsend-mint" | jq -r '.value')
