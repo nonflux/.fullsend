@@ -1,8 +1,11 @@
 name: Prioritize Scheduler
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'
+  # TODO: Re-enable once we have a first-class way to enable/disable
+  # schedule-based agents per org. Until then, keep commented out to avoid
+  # noisy Action runs in orgs that haven't configured the prioritize agent.
+  # schedule:
+  #   - cron: '*/10 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +43,11 @@ jobs:
           STALE_THRESHOLD: ${{ vars.PRIORITIZE_STALE_THRESHOLD || '7d' }}
         run: |
           set -euo pipefail
+
+          if [[ -z "${PROJECT_NUMBER}" ]]; then
+            echo "::notice::FULLSEND_PROJECT_NUMBER is not set; skipping prioritize scheduler."
+            exit 0
+          fi
 
           # --- Parse stale threshold into seconds ---
           parse_threshold() {

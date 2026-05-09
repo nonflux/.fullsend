@@ -240,6 +240,15 @@ if [ -n "$ENABLED_REPOS" ]; then
       continue
     fi
 
+    # Skip private repos — agent workflow logs on public .fullsend would expose content.
+    # Fail closed: only proceed if the API explicitly confirms the repo is public.
+    REPO_PRIVATE=$(gh api "repos/$ORG/$REPO" --jq '.private' 2>/dev/null || echo "unknown")
+    if [[ "$REPO_PRIVATE" != "false" ]]; then
+      echo "::warning::Skipping $REPO — private repos cannot be enrolled when .fullsend is public (visibility: $REPO_PRIVATE)"
+      SKIPPED=$((SKIPPED + 1))
+      continue
+    fi
+
     # Clean up any stale removal PR from a previous disable cycle.
     close_pr_on_branch "$REPO" "$UNENROLL_BRANCH" "Repo re-enabled in config.yaml"
 
