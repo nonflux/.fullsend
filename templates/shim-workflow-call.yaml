@@ -16,6 +16,7 @@
 name: fullsend
 
 permissions:
+  actions: write
   id-token: write
   contents: read
   pull-requests: read
