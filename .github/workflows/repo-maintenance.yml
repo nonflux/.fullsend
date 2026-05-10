@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: fullsend-ai/fullsend
-          ref: adr-0030-reusable-workflows
+          ref: v1
           path: .defaults
           sparse-checkout: |
             internal/scaffold/fullsend-repo/scripts/
@@ -58,7 +58,7 @@ jobs:
 
       - name: Mint fullsend token
         id: app-token
-        uses: fullsend-ai/fullsend/.github/actions/mint-token@adr-0030-reusable-workflows
+        uses: fullsend-ai/fullsend/.github/actions/mint-token@v1
         with:
           role: fullsend
           repos: ${{ steps.repo-list.outputs.names }}
