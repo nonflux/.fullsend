@@ -33,63 +33,22 @@ jobs:
       - name: Checkout .fullsend repository
         uses: actions/checkout@v6
 
-      - name: Checkout upstream defaults
-        uses: actions/checkout@v6
-        with:
-          repository: fullsend-ai/fullsend
-          ref: adr-0030-reusable-workflows
-          path: .defaults
-          sparse-checkout: |
-            internal/scaffold/fullsend-repo/agents/
-            internal/scaffold/fullsend-repo/skills/
-            internal/scaffold/fullsend-repo/schemas/
-            internal/scaffold/fullsend-repo/harness/
-            internal/scaffold/fullsend-repo/policies/
-            internal/scaffold/fullsend-repo/scripts/
-            .github/scripts/
-
-      - name: Prepare workspace (upstream defaults + org overrides)
-        run: |
-          set -euo pipefail
-          for dir in agents skills schemas harness policies scripts; do
-            src=".defaults/internal/scaffold/fullsend-repo/${dir}"
-            if [[ -d "${src}" ]]; then
-              mkdir -p "${dir}"
-              cp -rP "${src}/." "${dir}/"
-            fi
-          done
-          if [[ -d ".defaults/.github/scripts" ]]; then
-            mkdir -p .github/scripts
-            cp -rP ".defaults/.github/scripts/." .github/scripts/
-          fi
-          for dir in agents skills schemas harness policies scripts; do
-            if [[ -d "customized/${dir}" ]]; then
-              find "customized/${dir}" -type f ! -name '.gitkeep' -print0 \
-                | while IFS= read -r -d '' f; do
-                    rel="${f#customized/}"
-                    mkdir -p "$(dirname "${rel}")"
-                    cp "${f}" "${rel}"
-                  done
-            fi
-          done
-          rm -rf .defaults
-
       - name: Validate enrollment and extract repo metadata
         id: repo-parts
-        uses: fullsend-ai/fullsend/.github/actions/validate-enrollment@adr-0030-reusable-workflows
+        uses: ./.github/actions/validate-enrollment
         with:
           source_repo: ${{ inputs.source_repo }}
 
       - name: Mint prioritize token
         id: app-token
-        uses: fullsend-ai/fullsend/.github/actions/mint-token@adr-0030-reusable-workflows
+        uses: ./.github/actions/mint-token
         with:
           role: prioritize
           repos: ${{ steps.repo-parts.outputs.name }}
           mint_url: ${{ vars.FULLSEND_MINT_URL }}
 
       - name: Setup GCP and prepare credentials
-        uses: fullsend-ai/fullsend/.github/actions/setup-gcp@adr-0030-reusable-workflows
+        uses: ./.github/actions/setup-gcp
         with:
           gcp_auth_mode: ${{ vars.FULLSEND_GCP_AUTH_MODE }}
           gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
@@ -110,7 +69,7 @@ jobs:
         run: mkdir -p target-repo
 
       - name: Run prioritize agent
-        uses: fullsend-ai/fullsend/.github/actions/fullsend@adr-0030-reusable-workflows
+        uses: ./.github/actions/fullsend
         env:
           GITHUB_ISSUE_URL: ${{ fromJSON(inputs.event_payload).issue.html_url }}
         with:
