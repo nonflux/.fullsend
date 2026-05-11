@@ -1,3 +1,4 @@
+# lint-workflow-size: max-lines=380
 # Dispatcher workflow that routes events to agent workflows based on stage.
 # Routing logic determines the stage from event context — the shim only
 # forwards the raw event.  Adding a new stage requires only a case branch
@@ -112,6 +113,11 @@ jobs:
                     fi
                   fi
                   ;;
+                /prioritize)
+                  if [[ "${COMMENT_USER_TYPE}" != "Bot" ]] && is_authorized; then
+                    STAGE="prioritize"
+                  fi
+                  ;;
                 *)
                   # Non-command issue_comment: auto-triage on needs-info issues
                   # when commenter is a non-bot with association != NONE or is issue author
@@ -127,7 +133,9 @@ jobs:
               ;;
 
             issues)
-              if [[ "${EVENT_ACTION}" == "labeled" ]]; then
+              if [[ "${EVENT_ACTION}" == "opened" || "${EVENT_ACTION}" == "edited" ]]; then
+                STAGE="triage"
+              elif [[ "${EVENT_ACTION}" == "labeled" ]]; then
                 if [[ "${TRIGGERING_LABEL}" == "ready-to-code" ]]; then
                   STAGE="code"
                 elif [[ "${TRIGGERING_LABEL}" == "ready-for-review" ]]; then

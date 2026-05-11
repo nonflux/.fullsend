@@ -1,4 +1,5 @@
 # fullsend-stage: fix
+# lint-workflow-size: max-lines=310
 name: Fix
 
 permissions:
@@ -48,7 +49,7 @@ concurrency:
 
 jobs:
   fix:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@v1
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@v0
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}

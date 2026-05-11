@@ -1,3 +1,4 @@
+# lint-workflow-size: max-lines=220
 name: Prioritize Scheduler
 
 on:
@@ -28,7 +29,7 @@ jobs:
 
       - name: Mint fullsend token
         id: app-token
-        uses: fullsend-ai/fullsend/.github/actions/mint-token@v1
+        uses: fullsend-ai/fullsend/.github/actions/mint-token@v0
         with:
           role: fullsend
           repos: .fullsend
