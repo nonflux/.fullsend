@@ -6,6 +6,8 @@ version: "1"
 dispatch:
     platform: github-actions
     mode: oidc-mint
+inference:
+    provider: vertex
 defaults:
     roles:
         - fullsend
@@ -35,6 +37,6 @@ repos:
     .fullsend:
         enabled: false
     build-definitions:
-        enabled: true
+        enabled: false
     integration-service:
-        enabled: true
+        enabled: false
