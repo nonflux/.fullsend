@@ -10,7 +10,6 @@ inference:
     provider: vertex
 defaults:
     roles:
-        - fullsend
         - triage
         - coder
         - review
@@ -18,9 +17,6 @@ defaults:
     max_implementation_retries: 2
     auto_merge: false
 agents:
-    - role: fullsend
-      name: nonflux-fullsend
-      slug: nonflux-fullsend
     - role: triage
       name: nonflux-triage
       slug: nonflux-triage
