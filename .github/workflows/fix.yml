@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   fix:
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@v0
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-fix.yml@direct-wif
     with:
       event_type: ${{ inputs.event_type }}
       source_repo: ${{ inputs.source_repo }}
@@ -62,6 +62,5 @@ jobs:
       gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
     secrets:
       FULLSEND_GCP_WIF_PROVIDER: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
-      FULLSEND_GCP_WIF_SA_EMAIL: ${{ secrets.FULLSEND_GCP_WIF_SA_EMAIL }}
       FULLSEND_GCP_SA_KEY_JSON: ${{ secrets.FULLSEND_GCP_SA_KEY_JSON }}
       FULLSEND_GCP_PROJECT_ID: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
