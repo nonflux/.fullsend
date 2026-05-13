@@ -58,3 +58,61 @@ runs:
     - name: Prepare sandbox credentials
       shell: bash
       run: bash scripts/prepare-sandbox-credentials.sh
+
+    - name: Debug WIF — test Vertex AI auth from runner
+      if: inputs.gcp_auth_mode == 'wif'
+      shell: bash
+      run: |
+        set +e
+        echo "--- credential file type ---"
+        jq -r '.type' "$GOOGLE_APPLICATION_CREDENTIALS"
+        echo "--- has service_account_impersonation_url ---"
+        jq -r 'has("service_account_impersonation_url")' "$GOOGLE_APPLICATION_CREDENTIALS"
+        echo "--- has quota_project_id ---"
+        jq -r 'has("quota_project_id")' "$GOOGLE_APPLICATION_CREDENTIALS"
+        echo "--- credential_source keys ---"
+        jq -r '.credential_source | keys[]' "$GOOGLE_APPLICATION_CREDENTIALS"
+
+        echo "--- sandbox credential file ---"
+        SANDBOX_CREDS="$RUNNER_TEMP/sandbox-gcp-credentials.json"
+        if [[ -f "$SANDBOX_CREDS" ]]; then
+          jq '{type, has_sa_impersonation: has("service_account_impersonation_url"), has_quota_project: has("quota_project_id"), credential_source_keys: (.credential_source | keys)}' "$SANDBOX_CREDS"
+        fi
+
+        echo "--- STS exchange test (direct curl) ---"
+        OIDC_TOKEN_FILE="$RUNNER_TEMP/gcp-oidc-token"
+        if [[ -f "$OIDC_TOKEN_FILE" ]]; then
+          SUBJECT_TOKEN=$(jq -r '.value' "$OIDC_TOKEN_FILE" 2>/dev/null || cat "$OIDC_TOKEN_FILE")
+          AUDIENCE=$(jq -r '.audience' "$GOOGLE_APPLICATION_CREDENTIALS")
+          STS_RESP=$(curl -sS -X POST "https://sts.googleapis.com/v1/token" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",
+              \"audience\": \"$AUDIENCE\",
+              \"scope\": \"https://www.googleapis.com/auth/cloud-platform\",
+              \"requested_token_type\": \"urn:ietf:params:oauth:token-type:access_token\",
+              \"subject_token_type\": \"urn:ietf:params:oauth:token-type:jwt\",
+              \"subject_token\": \"$SUBJECT_TOKEN\"
+            }")
+          echo "STS response keys: $(echo "$STS_RESP" | jq -r 'keys[]' 2>/dev/null || echo 'parse error')"
+          echo "STS token type: $(echo "$STS_RESP" | jq -r '.token_type // .error // "unknown"')"
+
+          ACCESS_TOKEN=$(echo "$STS_RESP" | jq -r '.access_token // empty')
+          if [[ -n "$ACCESS_TOKEN" ]]; then
+            echo "::add-mask::$ACCESS_TOKEN"
+            echo "--- Vertex AI test (from runner, not sandbox) ---"
+            PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
+            HTTP_CODE=$(curl -s -o /tmp/vertex-debug-response.txt -w '%{http_code}' \
+              -X POST "https://global-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}')
+            echo "Vertex AI HTTP status: $HTTP_CODE"
+            cat /tmp/vertex-debug-response.txt
+            echo ""
+          else
+            echo "STS exchange failed: $STS_RESP"
+          fi
+        else
+          echo "No OIDC token file found at $OIDC_TOKEN_FILE"
+        fi
