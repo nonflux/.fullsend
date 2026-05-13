@@ -59,61 +59,63 @@ runs:
       shell: bash
       run: bash scripts/prepare-sandbox-credentials.sh
 
-    - name: Debug WIF — test Vertex AI via Google Auth library
+    - name: Debug WIF — decode OIDC JWT and test Vertex AI
       if: inputs.gcp_auth_mode == 'wif'
       shell: bash
       run: |
         set +e
         pip install -q google-auth requests 2>/dev/null
-        ORIG_CREDS="$GOOGLE_GHA_CREDS_PATH"
-        SANDBOX_CREDS="$RUNNER_TEMP/sandbox-gcp-credentials.json"
-        PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
 
-        echo "=== Test 1: Google Auth library with ORIGINAL credential file ==="
+        echo "=== OIDC JWT claims ==="
+        OIDC_TOKEN_FILE="$RUNNER_TEMP/gcp-oidc-token"
+        if [[ -f "$OIDC_TOKEN_FILE" ]]; then
+          JWT=$(jq -r '.value' "$OIDC_TOKEN_FILE" 2>/dev/null || cat "$OIDC_TOKEN_FILE")
+          PAYLOAD=$(echo "$JWT" | cut -d. -f2 | tr '_-' '/+' | fold -w 4 | sed '$ s/$/====/' | tr -d '\n' | base64 -d 2>/dev/null)
+          echo "$PAYLOAD" | jq '{iss, aud, sub, repository, repository_owner, job_workflow_ref, ref, event_name}' 2>/dev/null || echo "decode failed"
+        fi
+
+        echo ""
+        echo "=== Credential file structure (no secrets) ==="
+        ORIG_CREDS="${GOOGLE_GHA_CREDS_PATH:-$CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE}"
+        jq '{type, audience, subject_token_type, token_url,
+             service_account_impersonation_url,
+             has_quota_project: (.quota_project_id != null),
+             credential_source_type: .credential_source.url[:50]}' "$ORIG_CREDS" 2>/dev/null
+
+        echo ""
+        echo "=== Test: Google Auth library with ORIGINAL cred file → Vertex AI ==="
         GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
-        import google.auth
-        import google.auth.transport.requests
-        import urllib.request, json, sys
+        import google.auth, google.auth.transport.requests, urllib.request, json
         creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
         creds.refresh(google.auth.transport.requests.Request())
-        token = creds.token
-        print(f'Token type: {type(creds).__name__}')
+        print(f'Cred type: {type(creds).__name__}')
         print(f'Project: {project}')
-        print(f'Token prefix: {token[:20]}...')
+        print(f'Token (first 20): {creds.token[:20]}...')
         url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
         req = urllib.request.Request(url, method='POST',
             data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
-            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json'})
         try:
             resp = urllib.request.urlopen(req)
-            print(f'Vertex AI status: {resp.status}')
-            print(resp.read()[:200].decode())
+            print(f'Vertex AI: {resp.status} OK')
         except urllib.error.HTTPError as e:
-            print(f'Vertex AI status: {e.code}')
-            print(e.read()[:300].decode())
+            body = e.read().decode()
+            print(f'Vertex AI: {e.code}')
+            print(body[:400])
         "
 
         echo ""
-        echo "=== Test 2: Google Auth library with SANDBOX credential file ==="
-        GOOGLE_APPLICATION_CREDENTIALS="$SANDBOX_CREDS" python3 -c "
-        import google.auth
-        import google.auth.transport.requests
-        import urllib.request, json, sys
-        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        echo "=== Token info (introspect federated token) ==="
+        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
+        import google.auth, google.auth.transport.requests, urllib.request, json
+        creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
         creds.refresh(google.auth.transport.requests.Request())
-        token = creds.token
-        print(f'Token type: {type(creds).__name__}')
-        print(f'Project: {project}')
-        print(f'Token prefix: {token[:20]}...')
-        url = f'https://aiplatform.googleapis.com/v1/projects/$PROJECT/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
-        req = urllib.request.Request(url, method='POST',
-            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
-            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        url = f'https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}'
         try:
-            resp = urllib.request.urlopen(req)
-            print(f'Vertex AI status: {resp.status}')
-            print(resp.read()[:200].decode())
-        except urllib.error.HTTPError as e:
-            print(f'Vertex AI status: {e.code}')
-            print(e.read()[:300].decode())
+            resp = urllib.request.urlopen(url)
+            info = json.loads(resp.read())
+            for k in ['azp','aud','sub','scope','expires_in','email','email_verified']:
+                if k in info: print(f'{k}: {info[k]}')
+        except Exception as e:
+            print(f'tokeninfo error: {e}')
         "
