@@ -57,6 +57,4 @@ runs:
 
     - name: Prepare sandbox credentials
       shell: bash
-      env:
-        GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
       run: bash scripts/prepare-sandbox-credentials.sh
