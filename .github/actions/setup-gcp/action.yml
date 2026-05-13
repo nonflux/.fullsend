@@ -83,78 +83,79 @@ runs:
              credential_source_type: .credential_source.url[:50]}' "$ORIG_CREDS" 2>/dev/null
 
         echo ""
-        echo "=== Test 1: Vertex AI WITHOUT x-goog-user-project header ==="
+        echo "=== Test 1: Can federated token access ANY GCP API? ==="
         GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
         import google.auth, google.auth.transport.requests, urllib.request, json
         creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
         creds.refresh(google.auth.transport.requests.Request())
         print(f'Cred type: {type(creds).__name__}')
         print(f'Project: {project}')
-        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
-        req = urllib.request.Request(url, method='POST',
-            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
-            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json'})
-        try:
-            resp = urllib.request.urlopen(req)
-            print(f'Vertex AI: {resp.status} OK')
-        except urllib.error.HTTPError as e:
-            print(f'Vertex AI: {e.code}')
-            print(e.read().decode()[:300])
-        "
-
-        echo ""
-        echo "=== Test 2: Vertex AI WITH x-goog-user-project header ==="
-        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
-        import google.auth, google.auth.transport.requests, urllib.request, json
-        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-        creds.refresh(google.auth.transport.requests.Request())
-        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
-        req = urllib.request.Request(url, method='POST',
-            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
-            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json', 'x-goog-user-project': project})
-        try:
-            resp = urllib.request.urlopen(req)
-            print(f'Vertex AI: {resp.status} OK')
-        except urllib.error.HTTPError as e:
-            print(f'Vertex AI: {e.code}')
-            print(e.read().decode()[:300])
-        "
-
-        echo ""
-        echo "=== Test 3: Vertex AI with quota_project_id injected into cred file ==="
-        PATCHED_CREDS="$RUNNER_TEMP/patched-gcp-credentials.json"
-        PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
-        jq --arg qp "$PROJECT" '. + {quota_project_id: $qp}' "$ORIG_CREDS" > "$PATCHED_CREDS"
-        GOOGLE_APPLICATION_CREDENTIALS="$PATCHED_CREDS" python3 -c "
-        import google.auth, google.auth.transport.requests, urllib.request, json
-        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-        creds.refresh(google.auth.transport.requests.Request())
-        print(f'Cred type: {type(creds).__name__}')
-        print(f'quota_project: {getattr(creds, \"quota_project_id\", \"N/A\")}')
-        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
-        req = urllib.request.Request(url, method='POST',
-            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
-            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json', 'x-goog-user-project': project})
-        try:
-            resp = urllib.request.urlopen(req)
-            print(f'Vertex AI: {resp.status} OK')
-        except urllib.error.HTTPError as e:
-            print(f'Vertex AI: {e.code}')
-            print(e.read().decode()[:300])
-        "
-
-        echo ""
-        echo "=== Test 4: Simple API — list Vertex AI models (confirms IAM works at all) ==="
-        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
-        import google.auth, google.auth.transport.requests, urllib.request, json
-        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-        creds.refresh(google.auth.transport.requests.Request())
-        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models'
+        print(f'Token prefix: {creds.token[:30]}...')
+        # Test: Cloud Resource Manager
+        url = f'https://cloudresourcemanager.googleapis.com/v1/projects/{project}'
         req = urllib.request.Request(url, headers={'Authorization': f'Bearer {creds.token}'})
         try:
             resp = urllib.request.urlopen(req)
-            print(f'List models: {resp.status} OK')
+            print(f'projects.get: {resp.status} OK')
         except urllib.error.HTTPError as e:
-            print(f'List models: {e.code}')
-            print(e.read().decode()[:200])
+            print(f'projects.get: {e.code} {e.read().decode()[:200]}')
+        # Test: Service Usage
+        url2 = f'https://serviceusage.googleapis.com/v1/projects/{project}/services/aiplatform.googleapis.com'
+        req2 = urllib.request.Request(url2, headers={'Authorization': f'Bearer {creds.token}'})
+        try:
+            resp2 = urllib.request.urlopen(req2)
+            data = json.loads(resp2.read())
+            print(f'aiplatform service: {data.get(\"state\", \"unknown\")}')
+        except urllib.error.HTTPError as e:
+            print(f'serviceusage: {e.code} {e.read().decode()[:200]}')
         "
+
+        echo ""
+        echo "=== Test 2: testIamPermissions on project ==="
+        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
+        import google.auth, google.auth.transport.requests, urllib.request, json
+        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(google.auth.transport.requests.Request())
+        url = f'https://cloudresourcemanager.googleapis.com/v1/projects/{project}:testIamPermissions'
+        body = json.dumps({'permissions': [
+            'aiplatform.endpoints.predict',
+            'aiplatform.endpoints.list',
+            'serviceusage.services.use',
+            'resourcemanager.projects.get'
+        ]}).encode()
+        req = urllib.request.Request(url, method='POST', data=body,
+            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json'})
+        try:
+            resp = urllib.request.urlopen(req)
+            result = json.loads(resp.read())
+            print(f'Granted permissions: {result.get(\"permissions\", [])}')
+        except urllib.error.HTTPError as e:
+            print(f'testIamPermissions: {e.code} {e.read().decode()[:300]}')
+        "
+
+        echo ""
+        echo "=== Test 3: Vertex AI streamRawPredict ==="
+        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
+        import google.auth, google.auth.transport.requests, urllib.request, json
+        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(google.auth.transport.requests.Request())
+        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
+        req = urllib.request.Request(url, method='POST',
+            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
+            headers={'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json', 'x-goog-user-project': project})
+        try:
+            resp = urllib.request.urlopen(req)
+            print(f'Vertex AI: {resp.status} OK')
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            print(f'Vertex AI: {e.code}')
+            print(body[:500])
+        "
+
+        echo ""
+        echo "=== Test 4: gcloud auth print-access-token ==="
+        export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$ORIG_CREDS"
+        gcloud auth print-access-token 2>&1 | head -1 | cut -c1-30
+        echo ""
+        echo "=== Test 5: gcloud ai models list ==="
+        gcloud ai endpoints list --region=global --project="${GOOGLE_CLOUD_PROJECT}" 2>&1 | head -5
