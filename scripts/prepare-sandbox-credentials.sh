@@ -31,14 +31,15 @@ if [[ "$CRED_TYPE" == "external_account" ]]; then
   chmod 600 "$OIDC_DEST"
 
   SANDBOX_CREDS="$RUNNER_TEMP/sandbox-gcp-credentials.json"
-  jq '{
+  QUOTA_PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
+  jq --arg qp "$QUOTA_PROJECT" '{
     type, audience, subject_token_type, token_url,
     credential_source: { file: "/tmp/workspace/.gcp-oidc-token", format: .credential_source.format }
   } + (if .service_account_impersonation_url then
     {service_account_impersonation_url}
   else {} end)
-  + (if .quota_project_id then
-    {quota_project_id}
+  + (if $qp != "" then
+    {quota_project_id: $qp}
   else {} end)' "$CRED_CONFIG" > "$SANDBOX_CREDS"
 
   OIDC_AUTH_FILE="$RUNNER_TEMP/gcp-oidc-auth"
