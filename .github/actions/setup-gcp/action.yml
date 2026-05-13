@@ -103,12 +103,12 @@ runs:
             echo "--- Vertex AI test (from runner, not sandbox) ---"
             PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
             HTTP_CODE=$(curl -s -o /tmp/vertex-debug-response.txt -w '%{http_code}' \
-              -X POST "https://global-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict" \
+              -X POST "https://aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}')
             echo "Vertex AI HTTP status: $HTTP_CODE"
-            cat /tmp/vertex-debug-response.txt
+            head -5 /tmp/vertex-debug-response.txt
             echo ""
           else
             echo "STS exchange failed: $STS_RESP"
