@@ -64,6 +64,7 @@ runs:
       shell: bash
       run: |
         set +e
+        pip install -q google-auth requests 2>/dev/null
         ORIG_CREDS="$GOOGLE_GHA_CREDS_PATH"
         SANDBOX_CREDS="$RUNNER_TEMP/sandbox-gcp-credentials.json"
         PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
