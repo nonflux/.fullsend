@@ -58,3 +58,61 @@ runs:
     - name: Prepare sandbox credentials
       shell: bash
       run: bash scripts/prepare-sandbox-credentials.sh
+
+    - name: Debug WIF — test Vertex AI via Google Auth library
+      if: inputs.gcp_auth_mode == 'wif'
+      shell: bash
+      run: |
+        set +e
+        ORIG_CREDS="$GOOGLE_GHA_CREDS_PATH"
+        SANDBOX_CREDS="$RUNNER_TEMP/sandbox-gcp-credentials.json"
+        PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
+
+        echo "=== Test 1: Google Auth library with ORIGINAL credential file ==="
+        GOOGLE_APPLICATION_CREDENTIALS="$ORIG_CREDS" python3 -c "
+        import google.auth
+        import google.auth.transport.requests
+        import urllib.request, json, sys
+        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(google.auth.transport.requests.Request())
+        token = creds.token
+        print(f'Token type: {type(creds).__name__}')
+        print(f'Project: {project}')
+        print(f'Token prefix: {token[:20]}...')
+        url = f'https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
+        req = urllib.request.Request(url, method='POST',
+            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        try:
+            resp = urllib.request.urlopen(req)
+            print(f'Vertex AI status: {resp.status}')
+            print(resp.read()[:200].decode())
+        except urllib.error.HTTPError as e:
+            print(f'Vertex AI status: {e.code}')
+            print(e.read()[:300].decode())
+        "
+
+        echo ""
+        echo "=== Test 2: Google Auth library with SANDBOX credential file ==="
+        GOOGLE_APPLICATION_CREDENTIALS="$SANDBOX_CREDS" python3 -c "
+        import google.auth
+        import google.auth.transport.requests
+        import urllib.request, json, sys
+        creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(google.auth.transport.requests.Request())
+        token = creds.token
+        print(f'Token type: {type(creds).__name__}')
+        print(f'Project: {project}')
+        print(f'Token prefix: {token[:20]}...')
+        url = f'https://aiplatform.googleapis.com/v1/projects/$PROJECT/locations/global/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict'
+        req = urllib.request.Request(url, method='POST',
+            data=json.dumps({'anthropic_version':'vertex-2023-10-16','max_tokens':10,'messages':[{'role':'user','content':'hi'}]}).encode(),
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        try:
+            resp = urllib.request.urlopen(req)
+            print(f'Vertex AI status: {resp.status}')
+            print(resp.read()[:200].decode())
+        except urllib.error.HTTPError as e:
+            print(f'Vertex AI status: {e.code}')
+            print(e.read()[:300].decode())
+        "
