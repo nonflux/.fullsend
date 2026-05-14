@@ -39,4 +39,4 @@ repos:
     build-definitions:
         enabled: true
     integration-service:
-        enabled: true
+        enabled: false
