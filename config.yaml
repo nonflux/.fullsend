@@ -14,7 +14,6 @@ defaults:
         - triage
         - coder
         - review
-        - fix
     max_implementation_retries: 2
     auto_merge: false
 agents:
@@ -30,9 +29,6 @@ agents:
     - role: review
       name: nonflux-review
       slug: nonflux-review
-    - role: fix
-      name: nonflux-fix
-      slug: nonflux-fix
 repos:
     .fullsend:
         enabled: false
